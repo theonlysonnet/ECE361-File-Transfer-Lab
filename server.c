@@ -12,13 +12,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    int udp_port = atoi(argv[1]);
-    int sockfd;
+    int udp_port = atoi(argv[1]); // convert server port from string to int
+    int sockfd; // socket descriptor used to create UDP socket later
     char buffer[BUFFER_SIZE];
-    struct sockaddr_in server_addr, client_addr;
+    struct sockaddr_in server_addr, client_addr; // two addresses
     socklen_t addr_len = sizeof(client_addr);
 
-    // Create a UDP socket
+    // Create a UDP socket with IPv4 and Datagram Socket and the 0 is because UDP only uses IPv4
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
@@ -31,7 +31,9 @@ int main(int argc, char *argv[]) {
     server_addr.sin_port = htons(udp_port);
 
     // Bind the socket to the specified port
-    if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    // bind associates a socket with an address (IP address + port number)
+    // returns -1 on fail
+    if (bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {  
         perror("bind failed");
         close(sockfd);
         exit(EXIT_FAILURE);
@@ -43,7 +45,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         memset(buffer, 0, BUFFER_SIZE);
         int recv_len = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, 
-                                (struct sockaddr *)&client_addr, &addr_len);
+                                (struct sockaddr *)&client_addr, &addr_len); // gets address info of sender to use later
         if (recv_len < 0) {
             perror("recvfrom failed");
             continue;

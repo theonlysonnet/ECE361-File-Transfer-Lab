@@ -12,25 +12,25 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    char *server_address = argv[1];
-    int server_port = atoi(argv[2]);
-    int sockfd;
+    char *server_address = argv[1]; // assigning args that were input to strings
+    int server_port = atoi(argv[2]); // convert server port from string to int
+    int sockfd; // socket descriptor used to create UDP socket later
     char buffer[BUFFER_SIZE];
-    struct sockaddr_in server_addr;
+    struct sockaddr_in server_addr; // sockaddr struct as mentioned by Beej and it is used for IPv4 "the in stands for internet"
     socklen_t addr_len = sizeof(server_addr);
 
-    // Create a UDP socket
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("socket failed");
+    // Create a UDP socket with IPv4 and Datagram Socket and the 0 is because UDP only uses IPv4
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
+        perror("socket failed"); // error checking
         exit(EXIT_FAILURE);
     }
 
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port);
+    server_addr.sin_port = htons(server_port); // host to network short converts a 16-bit value (e.g., a port number) from the host byte order to the network byte order
 
-    if (inet_pton(AF_INET, server_address, &server_addr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, server_address, &server_addr.sin_addr) <= 0) {  // function converts the string IP address into its binary format and stores in sin_addr
         perror("Invalid server address");
         close(sockfd);
         exit(EXIT_FAILURE);
@@ -64,8 +64,8 @@ int main(int argc, char *argv[]) {
     // Receive the server's response
     memset(buffer, 0, BUFFER_SIZE);
     int recv_len = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, 
-                            (struct sockaddr *)&server_addr, &addr_len);
-    if (recv_len < 0) {
+                            (struct sockaddr *)&server_addr, &addr_len); // blocking call that receives message from server_addr
+    if (recv_len < 0) {  // returns number of bytes received
         perror("recvfrom failed");
         close(sockfd);
         exit(EXIT_FAILURE);
