@@ -36,13 +36,23 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Ask the user for input
-    printf("Enter message: ");
+    // Ask the user for file name
+    printf("ftp ");
     fgets(buffer, BUFFER_SIZE, stdin);
     buffer[strcspn(buffer, "\n")] = '\0'; // Remove newline character
 
+    //printf("Buffer length: %zu\n", strlen(buffer));
+
+    // Check if the file exists
+    if (access(buffer, F_OK) != 0) {
+        perror("File does not exist");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    const char *message = "ftp";
     // Send the message to the server
-    if (sendto(sockfd, buffer, strlen(buffer), 0, 
+    if (sendto(sockfd, message, strlen(buffer), 0, 
                (const struct sockaddr *)&server_addr, addr_len) < 0) {
         perror("sendto failed");
         close(sockfd);
