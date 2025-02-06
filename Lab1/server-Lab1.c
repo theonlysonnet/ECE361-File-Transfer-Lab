@@ -6,15 +6,6 @@
 
 #define BUFFER_SIZE 1024
 
-// definre a packet struct
-struct packet {
-    unsigned int total_frag;
-    unsigned int frag_no;
-    unsigned int size;
-    char* filename;
-    char filedata[1000];
-};
-
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <UDP listen port>\n", argv[0]);
