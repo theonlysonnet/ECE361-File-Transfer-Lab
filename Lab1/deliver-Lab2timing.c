@@ -12,6 +12,9 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    //Timing Start
+    time_t begin_time = time(NULL);
+
     char *server_address = argv[1]; // assigning args that were input to strings
     int server_port = atoi(argv[2]); // convert server port from string to int
     int sockfd; // socket descriptor used to create UDP socket later
@@ -87,6 +90,12 @@ int main(int argc, char *argv[]) {
     if (strcmp(buffer, "yes") == 0) {
         printf("A file transfer can start.\n");
     }
+
+    //Timing End
+    time_t end_time = time(NULL);
+    double result_time = difftime(end_time, begin_time);
+
+    printf("Elapsed Time = %.2f\n", result_time);
 
     close(sockfd);
     return 0;

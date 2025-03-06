@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 1283
 
 // definre a packet struct
 struct packet {
@@ -50,6 +50,11 @@ int main(int argc, char *argv[]) {
 
     printf("Server listening on port %d...\n", udp_port);
 
+    FILE *file = NULL;  // File pointer for writing data
+    unsigned int expected_frag_no = 1;  // Track expected fragment number
+    unsigned int total_fragments = 0;   // Track total number of fragments
+    file = fopen("tempname", "wb");
+
     // Wait for a message from the client
     while (1) {
         memset(buffer, 0, BUFFER_SIZE);
@@ -61,24 +66,69 @@ int main(int argc, char *argv[]) {
         }
 
         printf("Received message: %s\n", buffer);
+        //printf("Received message.\n");
+        
+        struct packet pkt;
 
-        // Respond based on the message
-        const char *response;
-        if (strcmp(buffer, "ftp") == 0) {
-            response = "yes";
-        } else {
-            response = "no";
+        // make packet with the message
+        pkt.total_frag = atoi(strtok(buffer, ":"));
+        pkt.frag_no = atoi(strtok(NULL, ":"));
+        pkt.size = atoi(strtok(NULL, ":"));
+        // Copy filename safely
+        char *filename_token = strtok(NULL, ":");
+        pkt.filename = malloc(strlen(filename_token) + 1);
+        strcpy(pkt.filename, filename_token);
+        
+        // Find start of binary file data
+        char *data_start = filename_token + strlen(filename_token) + 1;  // Move past null terminator
+
+        // Copy binary data safely
+        memcpy(pkt.filedata, data_start, pkt.size);
+
+        // Open file if first fragment
+        if (pkt.frag_no == 1) {
+            if (!file) {
+                perror("File creation failed");
+                return 1;
+            }
+            total_fragments = pkt.total_frag;  // Store total expected fragments
+            printf("Receiving file: %s (%u fragments)\n", pkt.filename, total_fragments);
         }
 
-        if (sendto(sockfd, response, strlen(response), 0, 
+        // Ensure correct fragment order
+        if (pkt.frag_no == expected_frag_no) {
+            fwrite(pkt.filedata, 1, pkt.size, file);
+            expected_frag_no++;  // Move to next expected fragment
+            printf("Correct fragment received: %u ...sent ACK to send next: %u\n", pkt.frag_no, expected_frag_no);
+            const char* response = "ACK";
+            if (sendto(sockfd, response, strlen(response), 0, 
                    (struct sockaddr *)&client_addr, addr_len) < 0) {
-            perror("sendto failed");
+                perror("sendto failed");
+            } else {
+                printf("Sent response: %s\n", response);
+            }
         } else {
-            printf("Sent response: %s\n", response);
+            printf("Out-of-order fragment received: %u (expected %u)...sent NACK to resend\n", pkt.frag_no, expected_frag_no);
+            const char* response = "NACK";
+            if (sendto(sockfd, response, strlen(response), 0, 
+                   (struct sockaddr *)&client_addr, addr_len) < 0) {
+                perror("sendto failed");
+            } else {
+                printf("Sent response: %s\n", response);
+            }
+        }
+
+        // Close file when all fragments received
+        if (pkt.frag_no == total_fragments) {
+            fclose(file);
+            rename("tempname", pkt.filename);
+            printf("File transfer complete: %s\n", pkt.filename);
             break;
         }
-        break;
+
+        free(pkt.filename);
     }
+
     close(sockfd);
     return 0;
 }

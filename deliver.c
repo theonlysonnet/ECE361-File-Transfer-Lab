@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define MESSAGE_SIZE 1283 // theoretical max size for a message string created from a packet
-#define MAX_FILENAME 255
+#define MESSAGE_SIZE 2048 // theoretical max size for a message string created from a packet
+#define MAX_FILENAME 254 // 255 with null termination
 int RTT = 50;
 
 // define a packet struct
@@ -17,7 +17,15 @@ struct packet {
     char filedata[1000]; 
 };
 
+// Function to create a packet string from struct
+void serialize_packet(struct packet *pkt, char *buffer) {
+    // Convert struct packet to a string format
+    sprintf(buffer, "%u:%u:%u:%s:", pkt->total_frag, pkt->frag_no, pkt->size, pkt->filename); //stores data from data struct into string
+    memcpy(buffer + strlen(buffer), pkt->filedata, pkt->size); // Append binary data
+}
+
 int main(int argc, char *argv[]) {
+    
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <server address> <server port>\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -69,11 +77,16 @@ int main(int argc, char *argv[]) {
         perror("Error opening file");
         exit(EXIT_FAILURE);
     }
-
+    
+    
     char packet_data[1000];
     int frag_count = 0; 
-    //int total_count = 0;
+    int total_count = 0;
     struct packet* packet_list[10486]; //upto 10 MB
+
+    for (int i = 0; i < 10486; i++) {
+        memset(&packet_list[i], 0, sizeof(packet_list[i]));
+    }
 
     // construct packets and send one by one nininini
     // reads upto 1000 characters and puts it in packet_data
@@ -88,41 +101,58 @@ int main(int argc, char *argv[]) {
             
         }
 
+        packet_list[frag_count - 1] = malloc(sizeof(struct packet));  // Allocate memory
+        //printf("Data before: %s", packet_data);
         memcpy(packet_list[frag_count-1]->filedata, packet_data, size); // insert into string for message
-        memcpy(packet_list[frag_count-1]->filename, file_name, file_name_length);
+        //printf("Data after: %s",packet_list[frag_count-1]->filedata);
+        packet_list[frag_count-1]->filename = malloc(MAX_FILENAME);
+        strncpy(packet_list[frag_count-1]->filename, file_name, MAX_FILENAME-1); // filename should be null terminated
         packet_list[frag_count-1]->frag_no = frag_count;
-        packet_list[frag_count-1]->size;
-        packet_list[frag_count-1]->total_frag++;
+        packet_list[frag_count-1]->size = size;
+        //packet_list[frag_count-1]->total_frag++;
+        total_count++;
 
         memset(&packet_data, 0, sizeof(packet_data)); // reset string for next read
     }
 
+    for (int i = 0; i < total_count; i++) {
+        packet_list[i]->total_frag = total_count;
+    }
+
     int count = 0;
-    //sending packets in packet_list
+    // sending packets in packet_list
     while (count < packet_list[0]->total_frag) {
         // construct message string from packet in packet_list
         char message[MESSAGE_SIZE];
 
-        char total_count_string[10];
+        char total_count_string[11]; // 11 because snprintf null terminates converted strings
         snprintf(total_count_string, sizeof(total_count_string), "%d", packet_list[count]->total_frag);
-        char frag_count_string[10];
+        char frag_count_string[11];
         snprintf(frag_count_string, sizeof(frag_count_string), "%d", packet_list[count]->frag_no);
-        char size_string[4];
+        char size_string[5];
         snprintf(size_string, sizeof(size_string), "%d", packet_list[count]->size);
 
         //make message
-        strncat(message, total_count_string, sizeof(message) - strlen(message) - 1);
-        strcat(":", total_count_string);
+        /*strncat(message, total_count_string, sizeof(message) - strlen(message) - 1);
+        strncat(message, ":", sizeof(message) - strlen(message) - 1);
         strncat(message, frag_count_string, sizeof(message) - strlen(message) - 1);
-        strcat(":", total_count_string);
+        strncat(message, ":", sizeof(message) - strlen(message) - 1);
         strncat(message, size_string, sizeof(message) - strlen(message) - 1);
-        strcat(":", total_count_string);
+        strncat(message, ":", sizeof(message) - strlen(message) - 1);
         strncat(message, file_name, sizeof(message) - strlen(message) - 1);
-        strcat(":", total_count_string);
-        memcpy(message + strlen(message), packet_list[count]->filedata, packet_list[count]->size + 1);  // Append manually // double check size + 1 thing
+        strncat(message, ":", sizeof(message) - strlen(message) - 1);*/
+        sprintf(message, "%d:%d:%d:%s:", 
+         packet_list[count]->total_frag, 
+         packet_list[count]->frag_no, 
+         packet_list[count]->size, 
+         packet_list[count]->filename);
+        int metadata_size = strlen(message);
+        memcpy(message + strlen(message), packet_list[count]->filedata, packet_list[count]->size);  // Append manually // double check size + 1 thing
+
+        //serialize_packet(packet_list[count], message);
 
         // send message string
-        if (sendto(sockfd, message, sizeof(message), 0, 
+        if (sendto(sockfd, message, metadata_size + packet_list[count]->size, 0, 
                 (const struct sockaddr *)&server_addr, addr_len) < 0) {
             perror("sendto failed");
             close(sockfd);
