@@ -3,6 +3,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <stdlib.h>
+#include <time.h>
+
 
 #define BUFFER_SIZE 1283
 
@@ -14,6 +17,10 @@ struct packet {
     char* filename;
     char filedata[1000];
 };
+
+double uniform_rand() {
+    return (double)rand() / (double)RAND_MAX;
+}
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -65,8 +72,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        printf("Received message: %s\n", buffer);
-        //printf("Received message.\n");
+        //printf("Received message: %s\n", buffer);
+        printf("Received message.\n");
         
         struct packet pkt;
 
@@ -96,26 +103,31 @@ int main(int argc, char *argv[]) {
         }
 
         // Ensure correct fragment order
-        if (pkt.frag_no == expected_frag_no) {
-            fwrite(pkt.filedata, 1, pkt.size, file);
-            expected_frag_no++;  // Move to next expected fragment
-            printf("Correct fragment received: %u ...sent ACK to send next: %u\n", pkt.frag_no, expected_frag_no);
-            const char* response = "ACK";
-            if (sendto(sockfd, response, strlen(response), 0, 
-                   (struct sockaddr *)&client_addr, addr_len) < 0) {
-                perror("sendto failed");
+        if (uniform_rand() > 0.01) {
+            if (pkt.frag_no == expected_frag_no) {
+                fwrite(pkt.filedata, 1, pkt.size, file);
+                expected_frag_no++;  // Move to next expected fragment
+                printf("Correct fragment received: %u ...sent ACK to send next: %u\n", pkt.frag_no, expected_frag_no);
+                const char* response = "ACK";
+                if (sendto(sockfd, response, strlen(response), 0, 
+                    (struct sockaddr *)&client_addr, addr_len) < 0) {
+                    perror("sendto failed");
+                } else {
+                    printf("Sent response: %s\n", response);
+                }
             } else {
-                printf("Sent response: %s\n", response);
+                printf("Out-of-order fragment received: %u (expected %u)...sent NACK to resend\n", pkt.frag_no, expected_frag_no);
+                const char* response = "NACK";
+                if (sendto(sockfd, response, strlen(response), 0, 
+                    (struct sockaddr *)&client_addr, addr_len) < 0) {
+                    perror("sendto failed");
+                } else {
+                    printf("Sent response: %s\n", response);
+                }
             }
-        } else {
-            printf("Out-of-order fragment received: %u (expected %u)...sent NACK to resend\n", pkt.frag_no, expected_frag_no);
-            const char* response = "NACK";
-            if (sendto(sockfd, response, strlen(response), 0, 
-                   (struct sockaddr *)&client_addr, addr_len) < 0) {
-                perror("sendto failed");
-            } else {
-                printf("Sent response: %s\n", response);
-            }
+        }
+        else {
+            printf("Packet %d dropped (simulated packet loss).\n", pkt.frag_no);
         }
 
         // Close file when all fragments received

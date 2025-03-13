@@ -3,186 +3,176 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <fcntl.h>
+#include <errno.h>
 
-#define MESSAGE_SIZE 2048 // theoretical max size for a message string created from a packet
-#define MAX_FILENAME 254 // 255 with null termination
-int RTT = 50;
+#define MESSAGE_SIZE 2048      // maximum message size
+#define MAX_FILENAME 254       // 255 including null terminator
+#define TIMEOUT_INTERVAL 2000  // timeout in milliseconds (2 seconds)
 
-// define a packet struct
-struct packet {
-    unsigned int total_frag; // let's assume max 2^32 which is 10 digits
-    unsigned int frag_no; // let's assume max 2^32 which is 10 digits
-    unsigned int size; // max 1000 so 4 digits
-    char* filename; // let's assume max 255 chars
-    char filedata[1000]; 
-};
-
-// Function to create a packet string from struct
-void serialize_packet(struct packet *pkt, char *buffer) {
-    // Convert struct packet to a string format
-    sprintf(buffer, "%u:%u:%u:%s:", pkt->total_frag, pkt->frag_no, pkt->size, pkt->filename); //stores data from data struct into string
-    memcpy(buffer + strlen(buffer), pkt->filedata, pkt->size); // Append binary data
+// Get the current time in milliseconds
+long get_current_time_ms() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+struct packet {
+    unsigned int total_frag;
+    unsigned int frag_no;
+    unsigned int size;
+    char* filename;
+    char filedata[1000];
+};
+
 int main(int argc, char *argv[]) {
-    
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <server address> <server port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    char *server_address = argv[1]; // assigning args that were input to strings
-    int server_port = atoi(argv[2]); // convert server port from string to int
-    int sockfd; // socket descriptor used to create UDP socket later
+    char *server_address = argv[1];
+    int server_port = atoi(argv[2]);
+    int sockfd;
     char file_name[MAX_FILENAME];
-    struct sockaddr_in server_addr; // sockaddr struct as mentioned by Beej and it is used for IPv4 "the in stands for internet"
+    struct sockaddr_in server_addr;
     socklen_t addr_len = sizeof(server_addr);
 
-    // Create a UDP socket with IPv4 and Datagram Socket and the 0 is because UDP only uses IPv4
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
-        perror("socket failed"); // error checking
+    // Create UDP socket
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set socket to non-blocking mode
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    if (fcntl(sockfd, F_SETFL, flags) < 0) {
+        perror("fcntl failed");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
     // Configure the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port); // host to network short converts a 16-bit value (e.g., a port number) from the host byte order to the network byte order
-
-    if (inet_pton(AF_INET, server_address, &server_addr.sin_addr) <= 0) {  // function converts the string IP address into its binary format and stores in sin_addr
+    server_addr.sin_port = htons(server_port);
+    if (inet_pton(AF_INET, server_address, &server_addr.sin_addr) <= 0) {
         perror("Invalid server address");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
 
-    int timeout = 1.5 * RTT; // timeout value used for retransmission
-
-    //printf("Buffer length: %zu\n", strlen(buffer));
     // Ask the user for the file name
     printf("Enter filename to send: ");
     fgets(file_name, MAX_FILENAME, stdin);
-    int file_name_length = strlen(file_name); // calculate file_name length before removing newline char
-    file_name[strcspn(file_name, "\n")] = '\0'; // Remove newline character
+    file_name[strcspn(file_name, "\n")] = '\0';
 
-    // Check if the file exists
+    // Check if file exists
     if (access(file_name, F_OK) != 0) {
         perror("File does not exist");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
 
-    // open file in reading mode and error check
-    FILE *file = fopen(file_name, "r");
-    if (file== NULL) {
+    // Open file in binary mode
+    FILE *file = fopen(file_name, "rb");
+    if (file == NULL) {
         perror("Error opening file");
         exit(EXIT_FAILURE);
     }
-    
-    
+
     char packet_data[1000];
-    int frag_count = 0; 
+    int frag_count = 0;
     int total_count = 0;
-    struct packet* packet_list[10486]; //upto 10 MB
+    // Pre-allocate an array for up to 10 MB (adjust if needed)
+    struct packet* packet_list[10486] = {0};
 
-    for (int i = 0; i < 10486; i++) {
-        memset(&packet_list[i], 0, sizeof(packet_list[i]));
-    }
-
-    // construct packets and send one by one nininini
-    // reads upto 1000 characters and puts it in packet_data
-    while( 1 /*checks to see if fully read or not*/ ) {
+    // Read the file and create packets
+    while (1) {
         int size = fread(packet_data, 1, 1000, file);
         if (size <= 0)
             break;
-        
-        frag_count++; // if there is a new fragment then add one as check by size
-        // reallocate packetlist array to be bigger if more frags than initially 10MB worth
-        if (frag_count > 10486 /*double check number*/) {
-            
+        frag_count++;
+        if (frag_count > 10486) {
+            fprintf(stderr, "File too large!\n");
+            break;
         }
-
-        packet_list[frag_count - 1] = malloc(sizeof(struct packet));  // Allocate memory
-        //printf("Data before: %s", packet_data);
-        memcpy(packet_list[frag_count-1]->filedata, packet_data, size); // insert into string for message
-        //printf("Data after: %s",packet_list[frag_count-1]->filedata);
-        packet_list[frag_count-1]->filename = malloc(MAX_FILENAME);
-        strncpy(packet_list[frag_count-1]->filename, file_name, MAX_FILENAME-1); // filename should be null terminated
-        packet_list[frag_count-1]->frag_no = frag_count;
-        packet_list[frag_count-1]->size = size;
-        //packet_list[frag_count-1]->total_frag++;
+        packet_list[frag_count - 1] = malloc(sizeof(struct packet));
+        memcpy(packet_list[frag_count - 1]->filedata, packet_data, size);
+        packet_list[frag_count - 1]->filename = malloc(MAX_FILENAME);
+        strncpy(packet_list[frag_count - 1]->filename, file_name, MAX_FILENAME - 1);
+        packet_list[frag_count - 1]->filename[MAX_FILENAME - 1] = '\0';
+        packet_list[frag_count - 1]->frag_no = frag_count;
+        packet_list[frag_count - 1]->size = size;
         total_count++;
-
-        memset(&packet_data, 0, sizeof(packet_data)); // reset string for next read
+        memset(packet_data, 0, sizeof(packet_data));
     }
-
+    // Set the total_frag field for every packet
     for (int i = 0; i < total_count; i++) {
         packet_list[i]->total_frag = total_count;
     }
 
     int count = 0;
-    // sending packets in packet_list
-    while (count < packet_list[0]->total_frag) {
-        // construct message string from packet in packet_list
+    // Sending packets with a simple stop-and-wait protocol
+    while (count < total_count) {
         char message[MESSAGE_SIZE];
+        // Build the packet header (fields separated by colons)
+        sprintf(message, "%u:%u:%u:%s:",
+                packet_list[count]->total_frag,
+                packet_list[count]->frag_no,
+                packet_list[count]->size,
+                packet_list[count]->filename);
+        int header_size = strlen(message);
+        // Append file data
+        memcpy(message + header_size, packet_list[count]->filedata, packet_list[count]->size);
 
-        char total_count_string[11]; // 11 because snprintf null terminates converted strings
-        snprintf(total_count_string, sizeof(total_count_string), "%d", packet_list[count]->total_frag);
-        char frag_count_string[11];
-        snprintf(frag_count_string, sizeof(frag_count_string), "%d", packet_list[count]->frag_no);
-        char size_string[5];
-        snprintf(size_string, sizeof(size_string), "%d", packet_list[count]->size);
-
-        //make message
-        /*strncat(message, total_count_string, sizeof(message) - strlen(message) - 1);
-        strncat(message, ":", sizeof(message) - strlen(message) - 1);
-        strncat(message, frag_count_string, sizeof(message) - strlen(message) - 1);
-        strncat(message, ":", sizeof(message) - strlen(message) - 1);
-        strncat(message, size_string, sizeof(message) - strlen(message) - 1);
-        strncat(message, ":", sizeof(message) - strlen(message) - 1);
-        strncat(message, file_name, sizeof(message) - strlen(message) - 1);
-        strncat(message, ":", sizeof(message) - strlen(message) - 1);*/
-        sprintf(message, "%d:%d:%d:%s:", 
-         packet_list[count]->total_frag, 
-         packet_list[count]->frag_no, 
-         packet_list[count]->size, 
-         packet_list[count]->filename);
-        int metadata_size = strlen(message);
-        memcpy(message + strlen(message), packet_list[count]->filedata, packet_list[count]->size);  // Append manually // double check size + 1 thing
-
-        //serialize_packet(packet_list[count], message);
-
-        // send message string
-        if (sendto(sockfd, message, metadata_size + packet_list[count]->size, 0, 
-                (const struct sockaddr *)&server_addr, addr_len) < 0) {
+        // Send the packet
+        long send_time = get_current_time_ms();
+        if (sendto(sockfd, message, header_size + packet_list[count]->size, 0,
+                   (struct sockaddr *)&server_addr, addr_len) < 0) {
             perror("sendto failed");
             close(sockfd);
             exit(EXIT_FAILURE);
         }
-
         printf("Packet %d sent to server...\n", packet_list[count]->frag_no);
 
-        char response[20];
-        // Receive the server's response
-        int recv_len = recvfrom(sockfd, response, 20, 0, 
-                                (struct sockaddr *)&server_addr, &addr_len); // blocking call that receives message from server_addr
-        if (recv_len < 0) {  // returns number of bytes received
-            perror("recvfrom failed");
-            close(sockfd);
-            exit(EXIT_FAILURE);
-        }
-
-        response[recv_len] = '\0'; // Null-terminate the received string
-        printf("Server response: %s\n", response);
-
-        if (strcmp(response, "ACK") == 0) {
-            printf("Packet %d acknowledged by server...will process next packet.\n", packet_list[count]->frag_no);
-            count++;
-        }
-        else {
-            printf("Packet %d NOT acknowledged by server...will process packet again.\n", packet_list[count]->frag_no);
+        // Wait for ACK with fixed timeout
+        int ack_received = 0;
+        while (!ack_received) {
+            long current_time = get_current_time_ms();
+            if (current_time - send_time > TIMEOUT_INTERVAL) {
+                // Timeout occurred; retransmit the same packet
+                printf("Timeout: No ACK received for packet %d. Retransmitting...\n", packet_list[count]->frag_no);
+                break;
+            }
+            char response[20];
+            int recv_len = recvfrom(sockfd, response, sizeof(response) - 1, 0,
+                                    (struct sockaddr *)&server_addr, &addr_len);
+            if (recv_len > 0) {
+                response[recv_len] = '\0';
+                printf("Server response: %s\n", response);
+                if (strcmp(response, "ACK") == 0) {
+                    printf("Packet %d acknowledged by server. Moving to next packet.\n", packet_list[count]->frag_no);
+                    ack_received = 1;
+                    count++;
+                } else if (strcmp(response, "NACK") == 0) {
+                    printf("Packet %d NOT acknowledged by server. Retransmitting...\n", packet_list[count]->frag_no);
+                    break;
+                }
+            } else {
+                usleep(10000);  // sleep briefly to avoid busy waiting
+            }
         }
     }
-    
+
+    // Clean up memory and close the file/socket
+    for (int i = 0; i < total_count; i++) {
+        free(packet_list[i]->filename);
+        free(packet_list[i]);
+    }
+    fclose(file);
     close(sockfd);
     return 0;
 }
